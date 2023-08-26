@@ -1,0 +1,27 @@
+{
+	"type": "module",
+	"scripts": {
+		"start": "ts-node-esm main.ts",
+		"dev": "nodemon",
+		"indexing": "ts-node-esm indexing.ts"
+	},
+	"dependencies": {
+		"@fastify/rate-limit": "^8.0.3",
+		"@xenova/transformers": "^2.5.3",
+		"dotenv": "^16.3.1",
+		"fastify": "^4.21.0",
+		"fp-ts": "^2.16.1",
+		"ioredis": "^5.3.2",
+		"meilisearch": "^0.34.1",
+		"nostr-tools": "^1.14.2",
+		"rambda": "^8.3.0",
+		"ts-pattern": "^5.0.5",
+		"websocket-polyfill": "^0.0.3"
+	},
+	"devDependencies": {
+		"@types/node": "^20.5.4",
+		"nodemon": "^3.0.1",
+		"ts-node": "^10.9.1",
+		"typescript": "^5.1.6"
+	}
+}

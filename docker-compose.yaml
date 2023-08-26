@@ -1,0 +1,19 @@
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.3
+    restart: always
+    ports:
+      - '7700:7700'
+    env_file:
+      - .env
+    command: meilisearch
+    volumes:
+    - ~/meili_data:/meili_data
+  cache:
+    image: redis
+    restart: always
+    ports:
+      - '6379:6379'
+    command: redis-server /usr/local/etc/redis/redis.conf
+    volumes:
+     - ${PWD}/redis.conf:/usr/local/etc/redis/redis.conf
