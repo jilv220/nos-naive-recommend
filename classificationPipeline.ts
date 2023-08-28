@@ -1,5 +1,5 @@
 import { pipeline } from "@xenova/transformers";
-import { SimplePool, Filter, Event } from 'nostr-tools';
+import { Event, Filter, SimplePool } from "nostr-tools";
 import { ClassifyOutcome } from "./types.js";
 import { removeURL } from "./utils.js";
 import { MINITE } from "./constants.js";
@@ -10,7 +10,6 @@ export const topic_labels = [
   "beauty",
   "outdoors",
   "arts",
-  "culture",
   "anime",
   "comics",
   "business",
@@ -28,18 +27,19 @@ export const topic_labels = [
   "technology",
   "science",
   "bitcoin",
-  "nostr",
   "porn",
-  "others",
   "programming",
-  "politics"
-]
+  "politics",
+  "meme",
+  "press",
+  "military",
+];
 
 export class ClassificationPipeline {
-  static task = 'zero-shot-classification';
-  static model = 'Xenova/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7';
+  static task = "zero-shot-classification";
+  static model = "Xenova/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7";
   static instance = null;
-  static thredshold = (1 / topic_labels.length) * 1.5
+  static thredshold = (1 / topic_labels.length) * 1.5;
 
   static async getInstance(progress_callback = null) {
     if (this.instance === null) {
@@ -53,12 +53,16 @@ export class ClassificationPipeline {
   }
 }
 
-export const classifyTopic = async (ev: Event<1 | 7>, redis: Redis) => {
-  let outcome: ClassifyOutcome
+export const classifyTopic = async (
+  ev: Event,
+  redis: Redis,
+  cacheDuration: number,
+) => {
+  let outcome: ClassifyOutcome;
   const getRes: ClassifyOutcome = JSON.parse(await redis.get(ev.id));
 
   if (getRes) {
-    outcome = getRes
+    outcome = getRes;
   } else {
     const cleanedEv = removeURL(ev);
     const classifier = await ClassificationPipeline.getInstance();
@@ -66,9 +70,11 @@ export const classifyTopic = async (ev: Event<1 | 7>, redis: Redis) => {
 
     outcome = {
       sequence: output.sequence,
-      label: output.scores[0] <= ClassificationPipeline.thredshold ? 'others' : output.labels[0]
-    }
-    await redis.set(ev.id, JSON.stringify(outcome), 'EX', 360 * MINITE);
+      label: output.scores[0] <= ClassificationPipeline.thredshold
+        ? "others"
+        : output.labels[0],
+    };
+    await redis.set(ev.id, JSON.stringify(outcome), "EX", cacheDuration);
   }
-  return outcome
-}
+  return outcome;
+};

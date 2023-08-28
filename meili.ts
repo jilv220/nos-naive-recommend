@@ -27,15 +27,13 @@ export const getIndexes = async (client: MeiliSearch) => {
 
 export const buildRecommendQuery = (
   weights: Record<string, any>,
-  offset: number,
 ) => {
   let queryParams: MultiSearchQuery[] = [];
   topic_labels.forEach((l) => {
     if (R.has(l, weights)) {
       queryParams.push({
         indexUid: l,
-        limit: Math.floor(weights[l] * 100),
-        offset: offset,
+        limit: Math.floor(weights[l] * 1000),
         sort: ["created_at:desc"],
       });
     }

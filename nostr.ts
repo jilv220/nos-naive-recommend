@@ -2,6 +2,8 @@ import { Event } from "nostr-tools";
 import * as R from "rambda";
 import { ClassifyOutcome } from "./types.js";
 import { topic_labels } from "./classificationPipeline.js";
+import { safeJsonParse } from "./errors.js";
+import { match } from "ts-pattern";
 
 export const nostrRelays = [
   "wss://nos.lol",
@@ -26,6 +28,15 @@ export const isNostrHexKey = (secret: string) => {
   return hexRegex.test(secret) && secret.length === 64;
 };
 
+export const getFollowingsFromKind3s = (evs: Event[]) => {
+  return R.compose(
+    R.uniq,
+    R.filter((fo) => fo !== "p" && fo !== "e"),
+    R.flatten,
+    R.map((um: Event) => um.tags),
+  )(evs);
+};
+
 export const getEventIDfromKind7 = (ev: Event<7>) => {
   const tags = ev.tags;
   const e = tags.filter((tag) => tag[0] === "e").flat();
@@ -46,6 +57,30 @@ export const getEventsIDfromKind7 = (evs: Event<7>[]) => {
   )(evs);
 };
 
+export const unwrapKind6Events = (evs: Event[]) => {
+  return R.compose(
+    R.filter((ev: Event) => ev !== undefined),
+    R.map((kind6: Event) => {
+      const parseRes = safeJsonParse(kind6.content);
+      const res = match(parseRes)
+        .with({ type: "ok" }, (res) => res.data as Event)
+        .otherwise(() => undefined);
+      return res;
+    }),
+  )(evs);
+};
+
+export const getEventIDsFromReplies = (evs: Event[]) => {
+  const res = evs
+    .filter((ev) => ev.kind === 1)
+    .filter((ev) => !isTopLevelPost(ev))
+    .map((ev) => ev.tags)
+    .flat()
+    .filter((tag) => tag[0] === "e")
+    .map((tag) => tag[1]);
+  return R.uniq(res);
+};
+
 export const getLabelDistFromEvents = (outcomes: ClassifyOutcome[]) => {
   const map = new Map<string, number>();
   R.forEach((outcome) => {
@@ -60,7 +95,7 @@ export const getLabelDistFromEvents = (outcomes: ClassifyOutcome[]) => {
 };
 
 export const buildDefaultWeights = () => {
-  const weight = 1 / 50;
+  const weight = 1 / topic_labels.length;
   const map = new Map<string, number>();
 
   R.compose(

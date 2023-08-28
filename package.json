@@ -1,8 +1,9 @@
 {
 	"type": "module",
 	"scripts": {
-		"start": "ts-node-esm main.ts",
+		"start": "pnpm run build & NODE_ENV=production node ./build/main.js",
 		"dev": "nodemon",
+		"build": "pnpm exec tsc",
 		"indexing": "ts-node-esm indexing.ts"
 	},
 	"dependencies": {

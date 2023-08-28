@@ -5,17 +5,27 @@ import * as R from "rambda";
 
 import Fastify, { FastifyRequest } from "fastify";
 
-import { spawn } from "child_process";
+import { ChildProcessWithoutNullStreams, spawn } from "child_process";
 import { MeiliSearch, MultiSearchResult } from "meilisearch";
 import { Event, nip19, SimplePool } from "nostr-tools";
 import { RecommendationParams } from "./types.js";
-import { buildDefaultWeights, isNostrHexKey, isTopLevelPost } from "./nostr.js";
+import {
+  buildDefaultWeights,
+  isNostrHexKey,
+  isTopLevelPost,
+  nostrRelays,
+} from "./nostr.js";
 import { unprocessableHandler } from "./errors.js";
 import { MEILI_INDEX_USER_WEIGHTS } from "./constants.js";
 import { match } from "ts-pattern";
 import { buildRecommendQuery } from "./meili.js";
 
-const indexingWorker = spawn("ts-node-esm", ["indexing.ts"]);
+let indexingWorker: ChildProcessWithoutNullStreams;
+if (process.env.NODE_ENV === "production") {
+  indexingWorker = spawn("node", ["./build/indexing.js"]);
+} else {
+  indexingWorker = spawn("ts-node-esm", ["indexing.ts"]);
+}
 
 indexingWorker.stdout.on("data", (data) => {
   console.log(`${data}`);
@@ -38,11 +48,6 @@ const client = new MeiliSearch({
   host: MEILI_HOST_URL,
   apiKey: MEILI_MASTER_KEY,
 });
-
-/**
- *  Nostr
- */
-const pool = new SimplePool();
 
 /**
  *  Fastify start
@@ -91,9 +96,10 @@ fastify.route({
       } catch (e) {
         return unprocessableHandler(e, reply);
       }
+    } else {
+      hexPubKey = pubkey;
     }
 
-    hexPubKey = pubkey;
     const res = await client.index(MEILI_INDEX_USER_WEIGHTS).search("", {
       filter: `pubkey=${hexPubKey}`,
     });
@@ -107,11 +113,11 @@ fastify.route({
         weights = res.hits[0].weight;
       });
 
-    const multiQuery = buildRecommendQuery(weights, offset);
+    const multiQuery = buildRecommendQuery(weights);
     const searchRes = await client.multiSearch({ queries: multiQuery });
 
     return R.compose(
-      R.slice(0, limit),
+      R.slice(offset * limit, (offset + 1) * limit),
       R.filter((ev: Event) => isTopLevelPost(ev)),
       R.sort((x: any, y: any) => x.created_at > y.created_at ? -1 : 1),
       R.flatten,

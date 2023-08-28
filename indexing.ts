@@ -19,15 +19,18 @@ import {
 
 import stopwords from "./stopwords-all.json" assert { type: "json" };
 import { ClassifyOutcome, IndexesResultsArr } from "./types.js";
-import { MEILI_INDEX_USER_WEIGHTS, MINITE, MONTH } from "./constants.js";
+import { HOUR, MEILI_INDEX_USER_WEIGHTS, MINITE, MONTH } from "./constants.js";
 import {
   buildWeightsFromDist,
+  getEventIDsFromReplies,
   getEventsIDfromKind7,
   getLabelDistFromEvents,
   isTopLevelPost,
   nostrRelays,
+  unwrapKind6Events,
 } from "./nostr.js";
 import { getIndexes } from "./meili.js";
+import { safeJsonParse } from "./errors.js";
 
 console.log("indexing worker started");
 
@@ -96,8 +99,7 @@ match(indexRes)
   });
 
 const filter: Filter = {
-  // seems the onlyone making sense is kind 0 and 1?
-  kinds: [0, 1],
+  kinds: [1, 6],
   // memory usage keeps going larger if a limit is not set, but why??
   limit: 200,
 };
@@ -105,62 +107,52 @@ const filter: Filter = {
 while (true) {
   const pool = new SimplePool();
   const evs = await pool.list(nostrRelays, [filter]);
-  const indexables = evs.filter((ev) => !unindexable(ev));
 
-  const topLvlPostEvs = indexables
-    .filter((ev) => ev.kind === 1)
-    .filter((ev) => isTopLevelPost(ev));
+  const kind6sUnwrapped = R.compose(
+    unwrapKind6Events,
+    R.filter((ev) => ev.kind === 6),
+  )(evs);
+
+  const kind1s = R.compose(
+    R.filter((ev: Event) => isTopLevelPost(ev)),
+    R.filter((ev) => !unindexable(ev)),
+    R.filter((ev: Event) => ev.kind === 1),
+  )(evs);
+
+  const indexables = R.concat(kind6sUnwrapped, kind1s);
 
   // sample users to index their weight
-  const pks = topLvlPostEvs.map((evs) => evs.pubkey);
-  const chunks = R.splitEvery(45, pks);
+  const pks = indexables.map((evs) => evs.pubkey);
+  const chunks = R.splitEvery(15, pks);
   const samplePks = R.map(
     (chunk: string[]) => chunk[Math.floor(Math.random() * chunk.length)],
     chunks,
   );
 
-  for await (const ev of topLvlPostEvs) {
+  for await (const ev of indexables) {
     // try to retrieve from cache
     let outcome: ClassifyOutcome;
-    const getRes: ClassifyOutcome = JSON.parse(await redis.get(ev.id));
-
-    if (getRes) {
-      outcome = getRes;
-    } else {
-      // cache miss
-      const cleanedEv = removeURL(ev);
-      const classifier = await ClassificationPipeline.getInstance();
-      const output = await classifier(cleanedEv.content, topic_labels);
-
-      outcome = {
-        sequence: output.sequence,
-        label: output.scores[0] <= ClassificationPipeline.thredshold
-          ? "others"
-          : output.labels[0],
-      };
-      await redis.set(ev.id, JSON.stringify(outcome), "EX", 12 * MINITE);
+    outcome = await classifyTopic(ev, redis, 12 * HOUR);
+    if (ev.kind === 6) {
+      console.log(outcome);
     }
 
-    const indexes = await TE.tryCatch(
-      (): Promise<IndexesResultsArr> =>
-        client.getIndexes({ limit: topic_labels.length * 2 }),
-      E.toError,
-    )();
-
-    if (E.isLeft(indexes)) {
-      continue;
-    }
-
-    const indexRes = indexes.right.results.filter((idx) =>
-      idx.uid === outcome.label
-    );
-
-    if (indexRes.length === 0) {
-      await TE.tryCatch(
-        () => client.createIndex(outcome.label, { primaryKey: "id" }),
-        E.toError,
-      )();
-    }
+    let indexRes = await getIndexes(client);
+    match(indexRes)
+      .with({ type: "error" }, (res) => {
+        console.error(res.error);
+      })
+      .with({ type: "ok" }, async (res) => {
+        const uid = R.find(
+          (index) => index.uid === outcome.label,
+          res.data.results,
+        );
+        if (!uid) {
+          await client.createIndex(outcome.label, {
+            primaryKey: "id",
+          });
+        }
+      });
 
     await TE.tryCatch(
       () => client.index(outcome.label).addDocuments([ev]),
@@ -170,31 +162,38 @@ while (true) {
 
   for await (const pk of samplePks) {
     let evs = await pool.list(nostrRelays, [{
-      kinds: [1, 7],
+      kinds: [1, 6, 7],
       authors: [pk],
       since: Math.floor((Date.now() - 3 * MONTH) / 1000),
-    }]);
+    }]) as Event[];
 
-    const kind7s: Event<7>[] = evs.filter((ev) => ev.kind === 7) as Event<7>[];
+    const IDsFromReplies = getEventIDsFromReplies(evs);
     const IDsFromKind7 = R.compose(
       R.uniq,
       getEventsIDfromKind7,
-    )(kind7s);
+      R.filter((ev: Event) => ev.kind === 7),
+    )(evs);
 
-    const evsFromKind7 = await pool.list(nostrRelays, [{
+    const kind6sUnwrapped = R.compose(
+      unwrapKind6Events,
+      R.filter((ev) => ev.kind === 6),
+    )(evs);
+    const evsFromKind7AndReplies = await pool.list(nostrRelays, [{
       kinds: [1],
-      ids: IDsFromKind7,
+      ids: R.concat(IDsFromKind7, IDsFromReplies),
     }]);
 
     evs = R.compose(
-      R.concat(evsFromKind7),
-      R.filter((ev: Event<1 | 7>) => ev.kind === 1),
+      R.concat(kind6sUnwrapped),
+      R.concat(evsFromKind7AndReplies),
+      R.filter((ev: Event) => ev.kind === 1),
     )(evs);
 
     match(evs.length)
-      .with(P.number.gte(50), async () => {
+      .with(P.number.gte(40), async () => {
+        console.log(`Active user found: ${pk}`);
         const outcomes = R.map(
-          async (ev) => await classifyTopic(ev, redis),
+          async (ev) => await classifyTopic(ev, redis, 12 * HOUR),
           evs,
         );
 
