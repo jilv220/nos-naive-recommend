@@ -1,4 +1,5 @@
-import { Event } from 'nostr-tools';
+import * as R from "rambda";
+import { Event } from "nostr-tools";
 
 const URL_REGX =
   /(?:https?):\/\/(\w+:?\w*)?(\S+)(:\d+)?(\/|\/([\w#!:.?+=&%!\-\/]))?/g;
@@ -42,8 +43,9 @@ export function removeURL(ev: Event): Event {
     concatStringArr(contentByLine, " ")
   );
   const contentMerged = concatStringArr(contentMergedBySpace, "\n");
-  ev.content = contentMerged;
-  return ev;
+  let copyEv = R.clone(ev);
+  copyEv.content = contentMerged;
+  return copyEv;
 }
 
 export function concatStringArr(strArr: string[], delimiter: string): string {

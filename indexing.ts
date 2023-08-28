@@ -130,11 +130,11 @@ while (true) {
   );
 
   for await (const ev of indexables) {
-    // try to retrieve from cache
     let outcome: ClassifyOutcome;
     outcome = await classifyTopic(ev, redis, 12 * HOUR);
-    if (ev.kind === 6) {
-      console.log(outcome);
+
+    if (ev.content === "\n\n") {
+      console.log(ev);
     }
 
     let indexRes = await getIndexes(client);
