@@ -34,7 +34,7 @@ export const getFollowingsFromKind3s = (evs: Event[]) => {
     R.filter((fo) => fo !== "p" && fo !== "e"),
     R.flatten,
     R.map((um: Event) => um.tags),
-  )(evs);
+  )(evs) as string[];
 };
 
 export const getEventIDfromKind7 = (ev: Event<7>) => {
@@ -84,11 +84,13 @@ export const getEventIDsFromReplies = (evs: Event[]) => {
 export const getLabelDistFromEvents = (outcomes: ClassifyOutcome[]) => {
   const map = new Map<string, number>();
   R.forEach((outcome) => {
-    const count = map.get(outcome.label);
-    if (count === undefined) {
-      map.set(outcome.label, 1);
-    } else {
-      map.set(outcome.label, count + 1);
+    if (outcome.label !== "others") {
+      const count = map.get(outcome.label);
+      if (count === undefined) {
+        map.set(outcome.label, 1);
+      } else {
+        map.set(outcome.label, count + 1);
+      }
     }
   }, outcomes);
   return map;

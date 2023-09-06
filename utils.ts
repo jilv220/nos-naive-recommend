@@ -68,3 +68,7 @@ export function removeDup<T extends Object, V>(elems: T[], key: keyof T): T[] {
   const iteratorValues = map.values();
   return [...iteratorValues];
 }
+
+export function buildPostNamespace(pk: string) {
+  return `post-${pk}`;
+}

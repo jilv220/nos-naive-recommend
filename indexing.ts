@@ -1,13 +1,11 @@
 import "dotenv/config";
 import "websocket-polyfill";
 
-import * as E from "fp-ts/lib/Either.js";
-import * as TE from "fp-ts/lib/TaskEither.js";
 import * as R from "rambda";
 
 import { MeiliSearch } from "meilisearch";
 import { Event, Filter, SimplePool } from "nostr-tools";
-import { removeURL, unindexable } from "./utils.js";
+import { buildPostNamespace, removeURL, unindexable } from "./utils.js";
 import { Redis } from "ioredis";
 import { match, P } from "ts-pattern";
 
@@ -24,6 +22,7 @@ import {
   buildWeightsFromDist,
   getEventIDsFromReplies,
   getEventsIDfromKind7,
+  getFollowingsFromKind3s,
   getLabelDistFromEvents,
   isTopLevelPost,
   nostrRelays,
@@ -31,6 +30,7 @@ import {
 } from "./nostr.js";
 import { getIndexes } from "./meili.js";
 import { safeJsonParse } from "./errors.js";
+import { spawn } from "node:child_process";
 
 console.log("indexing worker started");
 
@@ -107,7 +107,6 @@ const filter: Filter = {
 while (true) {
   const pool = new SimplePool();
   const evs = await pool.list(nostrRelays, [filter]);
-
   const kind6sUnwrapped = R.compose(
     unwrapKind6Events,
     R.filter((ev) => ev.kind === 6),
@@ -129,36 +128,35 @@ while (true) {
     chunks,
   );
 
-  for await (const ev of indexables) {
-    let outcome: ClassifyOutcome;
-    outcome = await classifyTopic(ev, redis, 12 * HOUR);
+  // for await (const ev of indexables) {
+  //   let outcome: ClassifyOutcome;
+  //   outcome = await classifyTopic(ev, redis, 12 * HOUR);
 
-    if (ev.content === "\n\n") {
-      console.log(ev);
-    }
+  //   if (ev.content === "\n\n") {
+  //     console.log(ev);
+  //   }
 
-    let indexRes = await getIndexes(client);
-    match(indexRes)
-      .with({ type: "error" }, (res) => {
-        console.error(res.error);
-      })
-      .with({ type: "ok" }, async (res) => {
-        const uid = R.find(
-          (index) => index.uid === outcome.label,
-          res.data.results,
-        );
-        if (!uid) {
-          await client.createIndex(outcome.label, {
-            primaryKey: "id",
-          });
-        }
-      });
+  //   let indexRes = await getIndexes(client);
+  //   match(indexRes)
+  //     .with({ type: "error" }, (res) => {
+  //       console.error(res.error);
+  //     })
+  //     .with({ type: "ok" }, async (res) => {
+  //       const uid = R.find(
+  //         (index) => index.uid === outcome.label,
+  //         res.data.results,
+  //       );
+  //       if (!uid) {
+  //         await client.createIndex(outcome.label, {
+  //           primaryKey: "id",
+  //         });
+  //       }
+  //     });
 
-    await TE.tryCatch(
-      () => client.index(outcome.label).addDocuments([ev]),
-      E.toError,
-    )();
-  }
+  //   if (outcome.label !== "others") {
+  //     await client.index(outcome.label).addDocuments([ev]);
+  //   }
+  // }
 
   for await (const pk of samplePks) {
     let evs = await pool.list(nostrRelays, [{
@@ -166,6 +164,20 @@ while (true) {
       authors: [pk],
       since: Math.floor((Date.now() - 3 * MONTH) / 1000),
     }]) as Event[];
+
+    const userPosts = JSON.parse(await redis.get(buildPostNamespace(pk)));
+    if (!userPosts) {
+      const topLevelKind1s = R.compose(
+        R.filter((ev: Event) => isTopLevelPost(ev)),
+        R.filter((ev: Event) => ev.kind === 1),
+      )(evs);
+      await redis.set(
+        buildPostNamespace(pk),
+        JSON.stringify(topLevelKind1s),
+        "EX",
+        4 * HOUR,
+      );
+    }
 
     const IDsFromReplies = getEventIDsFromReplies(evs);
     const IDsFromKind7 = R.compose(
